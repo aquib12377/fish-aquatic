@@ -5,6 +5,7 @@ adafruit-circuitpython-motor
 adafruit-blinka
 gpiozero
 RPi.GPIO
+Flask
 
 # Install separately via apt, NOT pip, on Raspberry Pi OS Bullseye/Bookworm:
 #   sudo apt install -y python3-picamera2 ffmpeg --no-install-recommends

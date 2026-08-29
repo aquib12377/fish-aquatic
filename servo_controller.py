@@ -65,6 +65,17 @@ class FishServoController:
             angle = CENTER_ANGLE + wave + steer
             s.angle = max(0, min(180, angle))
 
+    def idle_all(self):
+        """
+        Stop sending pulses so servos go limp, same as release() -- but
+        without deinitializing the PCA9685, so swim_step()/center_all() can
+        resume afterward without recreating the controller. Used by the web
+        dashboard's bot on/off toggle to pause the gait; release() remains
+        the one-way shutdown call for program exit.
+        """
+        for s in self.servos:
+            s.angle = None
+
     def release(self):
         """Stop sending pulses so servos don't hold torque / buzz when idle."""
         for s in self.servos:
