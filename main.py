@@ -44,7 +44,10 @@ latest_distance_cm = None
 distance_history = deque(maxlen=DISTANCE_HISTORY_LEN)   # [(timestamp, distance_cm), ...]
 camera_mode = "record"     # "record" (SD card, today's default) or "stream" (live MJPEG)
 latest_jpeg_frame = None
-bot_running = True         # swim gait + obstacle avoidance on/off, dashboard toggle
+bot_running = False        # swim gait + obstacle avoidance on/off, dashboard toggle
+                            # -- starts off; flip on from the dashboard once you're
+                            # ready (avoids the fish immediately swimming/thrashing
+                            # on every boot/service restart before anyone's watching)
 servo_test_requested = False
 servo_test_status = "idle"     # "idle" | "running" | "complete" | "error: ..."
 camera_test_requested = False
