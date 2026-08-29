@@ -158,9 +158,19 @@ python3 test_ultrasonic.py
 python3 test_camera.py
 ```
 
-Only move on to `python3 main.py` once all three pass.
+Only move on to `python3 main.py` once all three pass. See **TESTING.md**
+for what correct output looks like at each step, concrete troubleshooting
+for each script, and how to test the web dashboard (§9) once `main.py` is
+running.
 
 ## 8. Camera: continuous video saved to the SD card
+
+The camera has two mutually exclusive modes, selected at runtime from the
+web dashboard (§9): **record** (this section — the default, segmented
+H264->mp4 saved to the SD card) and **stream** (live MJPEG feed in the
+browser instead, see §9). Only one runs at a time — switching modes cleanly
+stops whichever is active before starting the other, since Picamera2 can't
+drive the sensor for both at once on this hardware.
 
 `camera_module.py` records H264 video and pipes it live through `ffmpeg`
 (via Picamera2's `FfmpegOutput`) into a playable `.mp4`, written directly to
@@ -186,7 +196,111 @@ script — `~/fishenv`'s working directory by default).
 To play a recording back, copy it off the Pi (`scp pi@<ip>:recordings/video_...mp4 .`)
 and open it in any standard video player — it's a normal H264-in-MP4 file.
 
-## 9. Caveats — please read all of these before assembly
+## 9. Web dashboard
+
+`main.py` is the **single entry point** for the whole robot: it starts the
+servo swim gait, obstacle-avoidance loop, sensor polling, and camera thread
+exactly as before, and additionally serves a small Flask dashboard on
+`0.0.0.0:5000` so any device on the same LAN/WiFi can reach it at:
+
+```
+http://<pi-ip>:5000/
+```
+
+(`hostname -I` on the Pi prints its IP.) `web_dashboard.py` is a library —
+it builds the Flask app but never touches hardware directly and is not run
+standalone; `main.py` imports it and wires it to the same
+daemon-thread-plus-lock shared state (`latest_distance_cm`, etc.) that the
+swim/obstacle loop already used, rather than introducing a different
+concurrency model.
+
+The dashboard shows:
+
+- **Live ultrasonic distance**, polled from a `GET /api/distance` JSON
+  endpoint once a second and updated in the page without a reload.
+  Websockets/SSE weren't worth the complexity for one slow-changing number.
+- **A camera mode toggle** (`GET`/`POST /api/camera_mode`) between:
+  - **Save to SD Card** — today's segmented H264->mp4 recording (§8),
+    unchanged behavior, still pruned by `prune_old_recordings()`.
+  - **Live Stream** — an MJPEG feed (`GET /stream.mjpg`) embedded directly
+    in the page as an `<img>` tag, at a deliberately modest resolution and
+    ~5 fps (`STREAM_FPS` in `web_dashboard.py`) — see the caveats below.
+
+  The servo gait and obstacle avoidance loop keep running regardless of
+  which camera mode is selected; the toggle only affects the camera.
+
+Run it the same way as before — nothing new to install beyond
+`pip install -r requirements.txt` picking up Flask:
+
+```bash
+source ~/fishenv/bin/activate
+python3 main.py
+```
+
+See **TESTING.md** for step-by-step verification (confirming the distance
+reading actually updates live, confirming the toggle really switches modes
+and recordings still land in `recordings/`, and viewing the stream from
+another device).
+
+## 10. Running on boot (systemd)
+
+`fish-robot.service` in this repo is a ready-to-use systemd unit that
+starts `main.py` on boot using the `fishenv` venv's own Python
+interpreter (equivalent to activating the venv, since a venv's `python3`
+already has the venv's packages on `sys.path` — systemd units can't
+`source activate.sh`), restarts it if it crashes, and sends its output to
+the journal.
+
+```ini
+[Unit]
+Description=Robotic fish (swim gait, obstacle avoidance, camera, web dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/fish_robot
+ExecStart=/home/pi/fishenv/bin/python3 /home/pi/fish_robot/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+If your username, venv path, or code directory differ from the defaults
+assumed above (`pi`, `~/fishenv`, `~/fish_robot`), edit `User=`,
+`ExecStart=`, and `WorkingDirectory=` in `fish-robot.service` before
+installing it — relative paths like `recordings/` are resolved against
+`WorkingDirectory`.
+
+Install and enable it:
+
+```bash
+sudo cp fish-robot.service /etc/systemd/system/fish-robot.service
+sudo systemctl daemon-reload
+sudo systemctl enable fish-robot.service
+sudo systemctl start fish-robot.service
+```
+
+Check status and logs:
+
+```bash
+sudo systemctl status fish-robot.service
+journalctl -u fish-robot.service -f       # follow logs live
+journalctl -u fish-robot.service -n 100   # last 100 lines
+```
+
+`Restart=on-failure` means a crash (e.g. a transient I2C or camera error)
+restarts the whole robot after 5s rather than leaving it dead until someone
+notices — the same daemon-thread design means a crash in one subsystem's
+Python thread still takes down the whole process, so systemd's restart is
+the recovery mechanism, not in-process error handling.
+
+## 11. Caveats — please read all of these before assembly
 
 **Aquatic-specific (the important ones):**
 
@@ -253,6 +367,25 @@ and open it in any standard video player — it's a normal H264-in-MP4 file.
 - Keep grounds common across the Pi, PCA9685, and sensor supply, or you'll
   get erratic I2C and distance readings.
 
+**Web dashboard (new):**
+
+- **The dashboard has no authentication.** Anyone who can reach the Pi's IP
+  on the same WiFi/LAN — not just you — can view the live distance reading
+  and camera stream and flip the recording/streaming toggle at
+  `http://<pi-ip>:5000/`. Don't run this on a network you don't trust (a
+  shared/public WiFi, an open guest network) without adding your own
+  auth in front of it; nothing here does that for you.
+- **One ARM11 core has real limits.** Flask, MJPEG streaming, the servo
+  swim-gait loop, and ultrasonic polling all share the Pi Zero W's single
+  core. The defaults (640×480 MJPEG at `STREAM_FPS = 5` in
+  `web_dashboard.py`) are deliberately modest — raising resolution/framerate
+  much further can start starving the servo loop of CPU time and making the
+  gait stutter. If you need higher-quality video, prefer SD-card recording
+  mode (hardware-encoded, much lighter — see §8) over pushing live-stream
+  quality up.
+- Recording and streaming are mutually exclusive by design (§8/§9) — don't
+  expect to record to the SD card and watch a live view at the same time.
+
 **Software/platform:**
 
 - Zero W = ARMv6 → 32-bit OS only, as above. Trying a 64-bit image will
@@ -271,14 +404,21 @@ and open it in any standard video player — it's a normal H264-in-MP4 file.
   on the full 0–180° range — mechanical end-stops vary unit to unit, and
   driving past them stresses the plastic/metal gears.
 
-## 10. Files
+## 12. Files
 
 - `servo_controller.py` — PCA9685 + 4-servo travelling-wave swim gait (library)
 - `ultrasonic_sensor.py` — AJ-SR04M Mode 1 reader (library)
-- `camera_module.py` — Picamera2 still/video capture + SD-card recording (library)
+- `camera_module.py` — Picamera2 still/video capture, SD-card recording, and
+  MJPEG streaming (library)
+- `web_dashboard.py` — Flask web dashboard: live distance readout + camera
+  mode toggle (library, built by and run from `main.py`)
 - `test_servos.py` — standalone servo bring-up test
 - `test_ultrasonic.py` — standalone ultrasonic bring-up test
 - `test_camera.py` — standalone camera bring-up test (still + short video)
-- `main.py` — ties everything together: swim, steer away from obstacles,
-  continuously record segmented video to the SD card
+- `main.py` — **single entry point.** Ties everything together: swim, steer
+  away from obstacles, run the camera in record-or-stream mode, and serve
+  the web dashboard
 - `requirements.txt` — pip dependencies (picamera2 and ffmpeg install via apt, see §5)
+- `fish-robot.service` — systemd unit for running `main.py` on boot, see §10
+- `TESTING.md` — detailed bring-up test walkthroughs, troubleshooting, and
+  web dashboard verification steps

@@ -1,0 +1,17 @@
+[Unit]
+Description=Robotic fish (swim gait, obstacle avoidance, camera, web dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/fish_robot
+ExecStart=/home/pi/fishenv/bin/python3 /home/pi/fish_robot/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
