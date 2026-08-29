@@ -225,9 +225,36 @@ The dashboard shows:
   - **Live Stream** — an MJPEG feed (`GET /stream.mjpg`) embedded directly
     in the page as an `<img>` tag, at a deliberately modest resolution and
     ~5 fps (`STREAM_FPS` in `web_dashboard.py`) — see the caveats below.
+- **A bot Start/Stop switch** (`GET`/`POST /api/bot_state`, `{"running": bool}`).
+  Stopping pauses only the swim gait — `swim_loop` calls the new
+  `FishServoController.idle_all()` once so the servos go limp (no buzzing)
+  instead of holding a pose, then resumes the gait's phase cleanly from
+  zero when restarted. The sensor loop, camera, and dashboard itself keep
+  running while stopped — this is a "hold still" switch for the body, not
+  a process kill switch (use `Ctrl+C` or `systemctl stop`, §10, for that).
+- **Component self-tests**, so you can sanity-check hardware from a browser
+  without SSHing in:
+  - **Test Servos** (`POST /api/test/servos`) briefly pauses the gait and
+    runs a short sweep of each joint (reusing the running `FishServoController`
+    — it does not open a second connection to the PCA9685), then resumes
+    whatever the bot's on/off state was.
+  - **Test Ultrasonic** (`GET /api/test/ultrasonic`) is non-destructive —
+    it summarizes (min/max/avg) a rolling ~5s buffer of readings the sensor
+    loop already collects, so it's safe to poll repeatedly and doesn't touch
+    the sensor directly.
+  - **Test Camera** (`POST /api/test/camera`) briefly interrupts the
+    current recording/streaming mode, captures one still into `captures/`
+    (reusing `FishCamera.capture_still()`), then resumes the previous
+    camera mode automatically. The captured image is served back at
+    `GET /captures/<filename>` and shown inline on the page.
+  - Each test's status (`idle`/`running`/`complete`/`error: ...`) is
+    polled from the same endpoint the trigger POST hits; a second trigger
+    while one is already running gets `409`.
 
   The servo gait and obstacle avoidance loop keep running regardless of
-  which camera mode is selected; the toggle only affects the camera.
+  which camera mode is selected; the toggle only affects the camera. All of
+  this shares the original `_lock`-guarded globals in `main.py` — no new
+  concurrency model, just more state under the same lock.
 
 Run it the same way as before — nothing new to install beyond
 `pip install -r requirements.txt` picking up Flask:
@@ -239,8 +266,9 @@ python3 main.py
 
 See **TESTING.md** for step-by-step verification (confirming the distance
 reading actually updates live, confirming the toggle really switches modes
-and recordings still land in `recordings/`, and viewing the stream from
-another device).
+and recordings still land in `recordings/`, viewing the stream from
+another device, exercising the bot Start/Stop switch, and running each
+component self-test).
 
 ## 10. Running on boot (systemd)
 
@@ -385,6 +413,13 @@ the recovery mechanism, not in-process error handling.
   quality up.
 - Recording and streaming are mutually exclusive by design (§8/§9) — don't
   expect to record to the SD card and watch a live view at the same time.
+- **The dashboard's Stop switch and self-tests can move the fish or briefly
+  interrupt recording/streaming.** Anyone who can reach the dashboard can
+  trigger the servo self-test (moves all 4 joints for a few seconds) or the
+  camera self-test (drops the active recording/stream for roughly a
+  second while it grabs a still). Harmless, but don't be surprised by
+  unexpected servo motion or a one-frame gap in a recording if someone else
+  on the network is poking at the dashboard.
 
 **Software/platform:**
 

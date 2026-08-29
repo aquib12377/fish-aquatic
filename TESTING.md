@@ -141,6 +141,47 @@ server, no relation to `recordings/`.)
   body is submerged, the dashboard and stream will drop as soon as the
   antenna area goes under.
 
+**Confirm the bot Start/Stop switch actually pauses/resumes the gait:**
+1. On page load, the bot status should read **Running** (the default) and
+   the fish should be visibly swimming.
+2. Click **Stop**. The servos should go limp within a fraction of a second
+   (no more wave motion, no idle buzzing) — this calls
+   `FishServoController.idle_all()`, not a full shutdown. The distance
+   reading and camera should be completely unaffected — confirm the number
+   is still updating and, if in stream mode, the live feed is still moving.
+3. Click **Start**. The gait should resume smoothly from a neutral phase
+   (not jump/snap into an arbitrary mid-wave position).
+4. If the status text doesn't flip, check `GET /api/bot_state` in dev
+   tools — it should return `{"running": true}` or `{"running": false}`
+   matching what you clicked.
+
+**Confirm the component self-tests work:**
+- **Test Servos**: click the button — each of the 4 joints should visibly
+  sweep in turn over a couple seconds, same motion as `test_servos.py`'s
+  sweep, then the gait should resume its previous Start/Stop state
+  afterward. The status line should progress `running` → `complete`. If
+  a servo doesn't move, troubleshoot as in §1 above — this reuses the same
+  `FishServoController` object main.py already created, so a channel
+  mismatch or wiring issue shows up identically here.
+- **Test Ultrasonic**: click the button — you should immediately get a
+  min/avg/max summary over roughly the last 5 seconds of readings (this
+  doesn't trigger a new sensor read, it summarizes what the sensor loop
+  already collected). `count: 0` means the sensor loop hasn't produced any
+  readings yet; troubleshoot as in §2 above.
+- **Test Camera**: click the button — within a couple seconds a captured
+  still should appear inline on the page, and the status should read
+  `complete`. If you were recording to the SD card, expect a roughly
+  one-second gap in that recording segment while the still is taken (by
+  design — see README's caveat) rather than a crash; recording should
+  resume automatically afterward (same check as step 4 of the mode-toggle
+  test above). If the image never appears, check the terminal/journalctl
+  output for the same camera errors covered in §3 above.
+- Triggering the same self-test twice while it's still running should
+  return HTTP 409, not start a second overlapping test — the dashboard
+  disables the button while a test is in flight, but you can confirm this
+  directly with `curl -X POST http://<pi-ip>:5000/api/test/servos` fired
+  twice in quick succession from a terminal.
+
 **Dashboard unreachable at all:**
 - Confirm the Pi and your other device are actually on the same
   subnet/WiFi network (a guest network or a phone on cellular data won't
