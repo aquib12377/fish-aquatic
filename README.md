@@ -328,6 +328,26 @@ notices — the same daemon-thread design means a crash in one subsystem's
 Python thread still takes down the whole process, so systemd's restart is
 the recovery mechanism, not in-process error handling.
 
+**`ModuleNotFoundError: No module named 'flask'` (or any other package) in
+`journalctl`:** the venv at `~/fishenv` doesn't have that package installed —
+usually because the code was updated (`git pull`/`scp`/`rsync`, §6) after
+`requirements.txt` changed, but `pip install -r requirements.txt` was never
+re-run in the venv to match. Fix it and restart:
+
+```bash
+source ~/fishenv/bin/activate
+pip install -r ~/fish_robot/requirements.txt
+deactivate
+sudo systemctl restart fish-robot.service
+```
+
+`systemctl start`/`restart` don't activate the venv for you — they invoke
+`~/fishenv/bin/python3` directly per `ExecStart=` above, so an out-of-date
+venv fails the same way every restart until it's reinstalled. Make
+`pip install -r requirements.txt` (§5) part of your normal update routine
+whenever you pull code that touches `requirements.txt`, not just on first
+setup.
+
 ## 11. Caveats — please read all of these before assembly
 
 **Aquatic-specific (the important ones):**
