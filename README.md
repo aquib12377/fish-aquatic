@@ -97,10 +97,34 @@ Use the 32-bit image.
    i2cdetect -y 1        # should show 40 (PCA9685 default address)
    rpicam-hello --list-cameras   # (older images: libcamera-hello)
    ```
+6. **Enable a USB rescue console now, while you still have easy access** —
+   this costs nothing and pays off the moment WiFi ever locks you out (see
+   below). It turns the Zero W's USB data port into a direct wired network
+   link to a computer, independent of WiFi entirely:
+   ```bash
+   echo "dtoverlay=dwc2" | sudo tee -a /boot/firmware/config.txt
+   sudo sed -i 's/\brootwait\b/rootwait modules-load=dwc2,g_ether/' /boot/firmware/cmdline.txt
+   sudo reboot
+   ```
+   (If you're doing this from another computer instead, with the SD card in
+   a reader: the same two files sit at the *root* of the boot partition —
+   just named `config.txt` and `cmdline.txt`, no `/boot/firmware/` prefix —
+   plus create an empty file named `ssh` there too in case SSH ever needs
+   re-enabling.) After a reboot, plug a USB cable into the Pi's **USB**
+   port (not `PWR IN`) and a computer, wait ~30-60s, then
+   `ssh pi@raspberrypi.local` works over that cable even if WiFi is
+   completely dead — no HDMI/keyboard or re-flashing required. Safe to
+   leave enabled permanently; it only does anything when that port is
+   actually plugged into a computer.
 
 **WiFi won't connect to a phone hotspot (or the WiFi LED blinks but it
-never associates):** before suspecting the Pi or the hotspot app, check
-these, roughly in order of how often they're the actual cause:
+never associates):** if you can't reach the Pi over WiFi at all to run any
+of the commands below, and you enabled the USB rescue console in step 6
+above, plug in the USB cable and `ssh` in over that first — everything
+here works the same way once you have any shell on the Pi, wired or
+wireless. Otherwise you'll need to pull the SD card and enable it now (see
+step 6). Before suspecting the Pi or the hotspot app, check these, roughly
+in order of how often they're the actual cause:
 
 - **Band mismatch — the single most common cause.** The Zero W's onboard
   chip (BCM43438) is **2.4GHz 802.11 b/g/n only** — it has no 5GHz radio at
