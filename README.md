@@ -98,6 +98,47 @@ Use the 32-bit image.
    rpicam-hello --list-cameras   # (older images: libcamera-hello)
    ```
 
+**WiFi won't connect to a phone hotspot (or the WiFi LED blinks but it
+never associates):** before suspecting the Pi or the hotspot app, check
+these, roughly in order of how often they're the actual cause:
+
+- **Band mismatch — the single most common cause.** The Zero W's onboard
+  chip (BCM43438) is **2.4GHz 802.11 b/g/n only** — it has no 5GHz radio at
+  all. Many phones default their hotspot to 5GHz, or to an "auto"/"smart"
+  band that steers modern devices onto 5GHz, and the Zero W simply cannot
+  see that network — it's not a matter of retrying longer. In the phone's
+  hotspot settings, force the band to **2.4GHz only** (Android: Settings →
+  Hotspot & tethering → AP band; iPhone hotspots are 2.4GHz by default
+  already, so this is mostly an Android issue).
+- **No WLAN country code set** → NetworkManager/`wpa_supplicant` soft-blocks
+  the radio (`rfkill`) rather than connecting at all. Check with
+  `rfkill list wifi`; if it shows `Soft blocked: yes`, set it via
+  `sudo raspi-config` → Localisation Options → WLAN Country (must match
+  where you actually are), or `sudo rfkill unblock wifi`.
+- **Credentials pre-configured in Imager don't match** — if you changed the
+  hotspot password after writing the SD card, or pre-configured the wrong
+  SSID, the Pi will keep retrying with stale credentials and look like it's
+  "trying forever." Reconfigure via `sudo nmtui` (Bookworm's default,
+  NetworkManager) or `sudo raspi-config` → System Options → Wireless LAN.
+- **Weak signal / hotspot out of range** — the Zero W's PCB antenna is
+  modest; keep the phone within a few meters for initial setup, especially
+  once the Pi is sealed inside the fish body.
+- **Diagnose what's actually happening** rather than guessing further:
+  ```bash
+  nmcli device wifi list        # does the hotspot even show up in a scan?
+  nmcli device status           # is wlan0 "connecting", "unavailable", or "disconnected"?
+  journalctl -u NetworkManager -b --no-pager | tail -50
+  dmesg | grep -i brcmfmac      # driver-level errors (firmware load failures, etc.)
+  ```
+  If the hotspot doesn't show up in `nmcli device wifi list` at all, that's
+  the band mismatch above, not a credentials or timing problem.
+
+This is separate from — but often confused with — the *service startup*
+delay covered in §10: even once WiFi is fixed and connecting reliably, a
+slow *initial* association after power-on is normal (retry/backoff, DHCP
+negotiation), which is why `fish-robot.service` no longer blocks the whole
+robot on network coming up (§10).
+
 ## 6. Getting the code onto the Pi
 
 After OS setup, get `README.md` and all the `.py` files onto the Pi, into a
@@ -226,12 +267,16 @@ The dashboard shows:
     in the page as an `<img>` tag, at a deliberately modest resolution and
     ~5 fps (`STREAM_FPS` in `web_dashboard.py`) — see the caveats below.
 - **A bot Start/Stop switch** (`GET`/`POST /api/bot_state`, `{"running": bool}`).
-  Stopping pauses only the swim gait — `swim_loop` calls the new
-  `FishServoController.idle_all()` once so the servos go limp (no buzzing)
-  instead of holding a pose, then resumes the gait's phase cleanly from
-  zero when restarted. The sensor loop, camera, and dashboard itself keep
-  running while stopped — this is a "hold still" switch for the body, not
-  a process kill switch (use `Ctrl+C` or `systemctl stop`, §10, for that).
+  The bot **starts off** (`bot_running = False` in `main.py`) every time
+  `main.py` launches or restarts — servos idle, nothing swimming — so it
+  never starts thrashing unattended on boot; flip it on from the dashboard
+  once you're actually watching it. Stopping pauses only the swim gait —
+  `swim_loop` calls the new `FishServoController.idle_all()` once so the
+  servos go limp (no buzzing) instead of holding a pose, then resumes the
+  gait's phase cleanly from zero when restarted. The sensor loop, camera,
+  and dashboard itself keep running while stopped — this is a "hold still"
+  switch for the body, not a process kill switch (use `Ctrl+C` or
+  `systemctl stop`, §10, for that).
 - **Component self-tests**, so you can sanity-check hardware from a browser
   without SSHing in:
   - **Test Servos** (`POST /api/test/servos`) briefly pauses the gait and
@@ -282,8 +327,7 @@ the journal.
 ```ini
 [Unit]
 Description=Robotic fish (swim gait, obstacle avoidance, camera, web dashboard)
-After=network-online.target
-Wants=network-online.target
+After=network.target
 
 [Service]
 Type=simple
@@ -298,6 +342,30 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 ```
+
+**Why it doesn't `Wants=network-online.target`:** earlier versions of this
+unit waited on `network-online.target`, which is why boot could appear to
+"take a long time to connect to the hotspot" — systemd was actually
+blocking `main.py` from starting at all until the WiFi interface finished
+associating with the hotspot *and* got a full DHCP lease, which on a phone
+hotspot can take anywhere from several seconds to a minute or more
+(association retries with backoff if the hotspot wasn't up yet, plus
+whatever `NetworkManager-wait-online`/`dhcpcd`'s own wait timeout is), and
+the servos/camera/obstacle-avoidance sat idle the whole time even though
+none of that needs a network connection. Only the Flask dashboard needs
+WiFi, and Flask binding `0.0.0.0:5000` doesn't require the interface to
+already have an address — the dashboard simply becomes reachable a moment
+after the WiFi link comes up, no restart needed. So the unit now only
+orders itself after basic network stack init (`network.target`, which
+doesn't block on a connection), and the robot starts swimming immediately
+at boot regardless of how long WiFi takes.
+
+This fixes the *robot* being stuck waiting — it does not fix WiFi that
+never connects at all (band mismatch, stale credentials, blocked radio).
+If the dashboard never becomes reachable and WiFi genuinely won't
+associate (not just slow), see the WiFi/hotspot troubleshooting steps in
+§5 — the Zero W's 2.4GHz-only radio and phones that default their hotspot
+to 5GHz is the most common cause of that.
 
 If your username, venv path, or code directory differ from the defaults
 assumed above (`pi`, `~/fishenv`, `~/fish_robot`), edit `User=`,
