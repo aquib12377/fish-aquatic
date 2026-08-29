@@ -133,6 +133,41 @@ these, roughly in order of how often they're the actual cause:
   If the hotspot doesn't show up in `nmcli device wifi list` at all, that's
   the band mismatch above, not a credentials or timing problem.
 
+**If a phone hotspot still won't cooperate, flip it around: make the Pi
+its own hotspot instead of joining one.** This sidesteps every problem
+above — band settings, credentials, phone-side quirks — because you're no
+longer depending on someone else's network at all; your phone/laptop
+connects *to the fish's* WiFi network directly. Bookworm's NetworkManager
+has this built in, no extra packages needed:
+
+```bash
+sudo nmcli device wifi hotspot ifname wlan0 ssid FishRobot password "pick-a-password"
+```
+
+That both creates and immediately activates a `Hotspot` connection profile
+(2.4GHz, since that's all the Zero W's radio does anyway — no band
+mismatch is possible now). The Pi is reachable at `192.168.4.1` from
+whatever device just joined the `FishRobot` network — browse to
+`http://192.168.4.1:5000/` for the dashboard instead of `hostname -I`'s
+address from §9.
+
+To make it come up automatically on every boot instead of running that
+command by hand each time:
+
+```bash
+sudo nmcli connection modify Hotspot connection.autoconnect yes \
+                                       connection.autoconnect-priority 100
+```
+
+The tradeoffs, so you can decide which mode fits how you'll actually use
+this: in hotspot mode the Pi has no internet access itself (fine — nothing
+in `main.py`/`web_dashboard.py` needs internet, only LAN reachability to
+whatever's connected), and only one device can be joined to it at a time
+on the Zero W's single radio, same limit either direction. If you'd rather
+switch back to joining an existing network later, `sudo nmtui` lets you
+add a regular WiFi connection alongside the `Hotspot` profile and pick
+which one is active.
+
 This is separate from — but often confused with — the *service startup*
 delay covered in §10: even once WiFi is fixed and connecting reliably, a
 slow *initial* association after power-on is normal (retry/backoff, DHCP
